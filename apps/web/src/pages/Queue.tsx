@@ -11,9 +11,9 @@ export default function Queue() {
     const timer = setTimeout(async () => {
       setStatus('Assigning allocation...');
       try {
-        const res = await apiClient.getAllocationStatus('ev_123', 'p_123456789');
+        const res = await apiClient.getAllocationStatus('ev_123');
         setTimeout(() => {
-          if (res.status === 'allocated') {
+          if (res.status === 'ALLOCATED') {
             navigate('/allocation');
           } else {
             navigate('/results');
@@ -34,7 +34,7 @@ export default function Queue() {
         <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
       </div>
       <p className="text-xl font-medium mb-2">{status}</p>
-      <p className="text-gray-500 text-sm mt-4">Participant ID: p_123456789</p>
+      <p className="text-gray-500 text-sm mt-4">Participant ID: securely identified</p>
       <div className="bg-yellow-50 text-yellow-800 p-4 rounded-md mt-6 text-sm text-left">
         <strong>Note:</strong> Refreshing does not improve your chances. You will be automatically redirected when it is your turn.
       </div>

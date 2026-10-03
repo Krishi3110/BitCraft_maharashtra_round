@@ -43,6 +43,6 @@ describe('Mock API', () => {
     expect(event.id).toBe('ev_123');
     
     const join = await api.joinDrop('ev_123', {});
-    expect(join.status).toBe('waiting');
+    expect(join.status).toBe('REGISTERED');
   });
 });
