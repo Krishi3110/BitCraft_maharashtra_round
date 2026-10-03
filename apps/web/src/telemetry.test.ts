@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TelemetryCollector } from './telemetry/collector';
-import { getMockApi } from './api/mock';
+import { MockApiClient } from './api/mock';
 
 describe('TelemetryCollector', () => {
   beforeEach(() => {
@@ -19,10 +19,8 @@ describe('TelemetryCollector', () => {
     telemetry.recordEvent('click');
     telemetry.recordEvent('scroll');
     
-    // Should have 2 events in buffer (we can't directly check private buffer but we know it hasn't flushed yet)
     expect(consoleSpy).not.toHaveBeenCalled();
     
-    // Fast-forward time
     vi.advanceTimersByTime(1100);
     
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -40,11 +38,11 @@ describe('TelemetryCollector', () => {
 
 describe('Mock API', () => {
   it('returns expected mock data', async () => {
-    const api = getMockApi();
+    const api = new MockApiClient();
     const event = await api.getEventDetails();
     expect(event.id).toBe('ev_123');
     
-    const join = await api.joinDrop();
+    const join = await api.joinDrop('ev_123', {});
     expect(join.status).toBe('waiting');
   });
 });
