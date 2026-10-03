@@ -1,9 +1,11 @@
 import { DropDO } from "./drop/DropDO";
+import { signJWT } from "./auth/jwt";
 
 export interface Env {
   DB: D1Database;
   DROP_DO: DurableObjectNamespace;
   ASSETS: Fetcher;
+  SESSION_SECRET: string;
 }
 
 export { DropDO };
@@ -11,6 +13,44 @@ export { DropDO };
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Identity/Session Endpoint
+    // Rate Limiting: In production, wrap this route with Cloudflare Rate Limiting rules 
+    // and validate a Turnstile token before generating a session to prevent bot farming.
+    if (url.pathname === "/api/v1/auth/session" && request.method === "POST") {
+      try {
+        if (!env.SESSION_SECRET) {
+          return new Response(JSON.stringify({ error: "Server misconfiguration: missing SESSION_SECRET" }), { status: 500 });
+        }
+        
+        const participantId = crypto.randomUUID();
+        const now = Math.floor(Date.now() / 1000);
+        // Expiration: 48 hours
+        const exp = now + 48 * 3600;
+        
+        const token = await signJWT({
+          sub: participantId,
+          iss: 'fairdrop',
+          aud: 'fairdrop-client',
+          iat: now,
+          exp,
+          jti: crypto.randomUUID()
+        }, env.SESSION_SECRET);
+
+        const isSecure = url.protocol === 'https:' ? 'Secure;' : '';
+        const cookie = `session=${token}; HttpOnly; ${isSecure} SameSite=Strict; Path=/; Max-Age=${48 * 3600}`;
+
+        return new Response(JSON.stringify({ token, participant_id: participantId }), {
+          status: 201,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": cookie
+          }
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+      }
+    }
 
     if (url.pathname === "/api/v1/health") {
       try {
