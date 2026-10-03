@@ -19,7 +19,7 @@ export default function Queue() {
             navigate('/results');
           }
         }, 2000);
-      } catch (err) {
+      } catch {
         setStatus('Error retrieving status.');
       }
     }, 3000);

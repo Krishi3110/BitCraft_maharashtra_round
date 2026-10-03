@@ -1,5 +1,5 @@
 import fs from 'fs';
-import path from 'path';
+
 
 const pages = ['Home', 'Event', 'Drop', 'Queue', 'Allocation', 'Reservation', 'Ticket', 'StressTest', 'LiveExperiment', 'Results', 'Audit'];
 

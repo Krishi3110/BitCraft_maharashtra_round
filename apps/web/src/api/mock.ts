@@ -7,7 +7,7 @@ export class MockApiClient implements ApiClient {
     return { id: 'ev_123', name: 'FUTUREFEST 2026', totalTickets: 500 };
   }
 
-  async getDropState(dropId: string): Promise<DropStateResponse> {
+  async getDropState(_dropId: string): Promise<DropStateResponse> {
     return {
       state: 'REGISTRATION_OPEN',
       config: {
@@ -30,11 +30,11 @@ export class MockApiClient implements ApiClient {
     };
   }
 
-  async joinDrop(dropId: string, participantData: any): Promise<JoinDropResponse> {
+  async joinDrop(_dropId: string, _participantData: any): Promise<JoinDropResponse> {
     return { status: 'REGISTERED', participant_id: 'p_mock_123' };
   }
 
-  async getAllocationStatus(dropId: string): Promise<AllocationStatusResponse> {
+  async getAllocationStatus(_dropId: string): Promise<AllocationStatusResponse> {
     return { status: 'ALLOCATED' };
   }
 }
