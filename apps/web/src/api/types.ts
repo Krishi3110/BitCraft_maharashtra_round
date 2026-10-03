@@ -11,6 +11,7 @@ export type { JoinDropResponse, AllocationStatusResponse };
 
 export interface ApiClient {
   getEventDetails(): Promise<EventDetails>;
+  initSession(): Promise<void>;
   getDropState(dropId: string): Promise<DropStateResponse>;
   joinDrop(dropId: string, participantData: any): Promise<JoinDropResponse>;
   getAllocationStatus(dropId: string): Promise<AllocationStatusResponse>;

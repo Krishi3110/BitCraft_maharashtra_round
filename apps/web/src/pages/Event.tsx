@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
+import { useAuth } from '../AuthContext';
 
 export default function Event() {
   const navigate = useNavigate();
+  const { isAuthenticated, isInitializing, login } = useAuth();
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -49,12 +51,22 @@ export default function Event() {
       </div>
 
       <div className="text-center mt-12">
-        <Link 
-          to="/drop" 
-          className="bg-black text-white px-8 py-4 rounded-md font-bold hover:bg-gray-800 transition shadow-lg w-full md:w-auto inline-block"
-        >
-          Join Fair Drop
-        </Link>
+        {!isAuthenticated ? (
+          <button 
+            onClick={login}
+            disabled={isInitializing}
+            className="bg-blue-600 text-white px-8 py-4 rounded-md font-bold hover:bg-blue-700 transition shadow-lg w-full md:w-auto inline-block disabled:opacity-50"
+          >
+            {isInitializing ? 'Authenticating...' : 'Sign In to Register'}
+          </button>
+        ) : (
+          <Link 
+            to="/drop" 
+            className="bg-black text-white px-8 py-4 rounded-md font-bold hover:bg-gray-800 transition shadow-lg w-full md:w-auto inline-block"
+          >
+            Join Fair Drop
+          </Link>
+        )}
         <p className="text-xs text-gray-400 mt-4">Powered by Fair Drop Engine</p>
       </div>
     </div>

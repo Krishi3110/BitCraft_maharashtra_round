@@ -1,6 +1,8 @@
 import { ApiClient, EventDetails, DropStateResponse, JoinDropResponse, AllocationStatusResponse } from './types';
 
 export class MockApiClient implements ApiClient {
+  async initSession(): Promise<void> { console.log('Mock session initialized'); }
+
   async getEventDetails(): Promise<EventDetails> {
     return { id: 'ev_123', name: 'FUTUREFEST 2026', totalTickets: 500 };
   }
