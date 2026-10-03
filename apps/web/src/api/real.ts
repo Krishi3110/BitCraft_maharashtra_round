@@ -29,8 +29,8 @@ export class RealApiClient implements ApiClient {
     return res.json();
   }
 
-  async getAllocationStatus(dropId: string, participantId: string): Promise<AllocationStatusResponse> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/drops/${dropId}/status?participant=${participantId}`);
+  async getAllocationStatus(dropId: string): Promise<AllocationStatusResponse> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/drops/${dropId}/status`);
     if (!res.ok) {
       throw new Error(`Allocation status failed: ${res.status} ${res.statusText}`);
     }

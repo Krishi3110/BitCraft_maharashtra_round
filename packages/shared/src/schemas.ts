@@ -49,7 +49,6 @@ export interface DropMeta {
 
 export const ParticipantStatusEnum = z.enum([
   'REGISTERED',
-  'PENDING',
   'ALLOCATED',
   'WAITLISTED',
   'CONFIRMED',
