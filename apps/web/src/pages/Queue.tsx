@@ -1,25 +1,27 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMockApi } from '../api/mock';
+import { apiClient } from '../api/client';
 
 export default function Queue() {
   const [status, setStatus] = useState('Waiting in line...');
   const navigate = useNavigate();
 
   useEffect(() => {
-    const api = getMockApi();
-    
     // Simulate some waiting
     const timer = setTimeout(async () => {
       setStatus('Assigning allocation...');
-      const res = await api.getAllocationStatus();
-      setTimeout(() => {
-        if (res.status === 'allocated') {
-          navigate('/allocation');
-        } else {
-          navigate('/results');
-        }
-      }, 2000);
+      try {
+        const res = await apiClient.getAllocationStatus('ev_123', 'p_123456789');
+        setTimeout(() => {
+          if (res.status === 'allocated') {
+            navigate('/allocation');
+          } else {
+            navigate('/results');
+          }
+        }, 2000);
+      } catch (err) {
+        setStatus('Error retrieving status.');
+      }
     }, 3000);
 
     return () => clearTimeout(timer);
