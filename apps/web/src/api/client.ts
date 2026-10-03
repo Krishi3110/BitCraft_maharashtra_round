@@ -1,5 +1,7 @@
-import { getMockApi } from './mock';
+import { ApiClient } from './types';
+import { MockApiClient } from './mock';
+import { RealApiClient } from './real';
 
-const USE_MOCK = true;
+const useMock = import.meta.env.VITE_API_MODE === 'mock';
 
-export const apiClient = USE_MOCK ? getMockApi() : {};
+export const apiClient: ApiClient = useMock ? new MockApiClient() : new RealApiClient();
