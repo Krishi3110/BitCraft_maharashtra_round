@@ -7,9 +7,25 @@ export interface Env {
   DROP_DO: DurableObjectNamespace;
   ASSETS: Fetcher;
   SESSION_SECRET: string;
+  ADMIN_SECRET: string;
 }
 
 export { DropDO };
+
+function adminAuthenticate(request: Request, env: Env): Response | null {
+  if (!env.ADMIN_SECRET) {
+    return new Response(JSON.stringify({ error: "Server misconfiguration: missing ADMIN_SECRET" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token || token !== env.ADMIN_SECRET) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+  return null;
+}
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -75,6 +91,12 @@ export default {
       } catch (err) {
         return new Response(JSON.stringify({ worker: "ok", error: String(err) }), { status: 500 });
       }
+    }
+
+    // Enforce Admin Authentication boundary
+    if (url.pathname.startsWith("/api/v1/admin/")) {
+      const authError = adminAuthenticate(request, env);
+      if (authError) return authError;
     }
 
     // Admin endpoint: Publish Drop (DRAFT -> SCHEDULED)
