@@ -47,7 +47,7 @@ describe("Phase 3 - Drop State Machine", () => {
 
     state = await getDOState();
     expect(state.state).toBe("SCHEDULED");
-    expect(state.server_seed).toBeDefined();
+    expect(state.server_seed).toBeUndefined();
     expect(state.seed_commitment).toBeDefined();
 
     // Tickets initialized
