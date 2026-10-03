@@ -1,0 +1,35 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"observability": {
+		"enabled": true
+	},
+	"assets": {
+		"directory": "../web/dist",
+		"binding": "ASSETS"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "fair-drop",
+			"database_id": "ccbcd451-de1c-4a55-8a5d-6734be46352c",
+			"migrations_dir": "../../database/migrations"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "DROP_DO",
+				"class_name": "DropDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["DropDO"]
+		}
+	]
+}

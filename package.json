@@ -1,0 +1,16 @@
+{
+  "name": "fair-drop",
+  "version": "1.0.0",
+  "description": "Fair, bot-resistant limited-seat booking for **FUTUREFEST 2026** (500 tickets, up to 50,000 simulated participants).",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true
+}

@@ -1,0 +1,33 @@
+# Environment variables
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+
+# Node modules
+node_modules/
+
+# Build artifacts
+dist/
+build/
+.wrangler/
+out/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary and local databases
+*.sqlite
+*.sqlite3
+*.db
+.d1/
+
+# Test artifacts
+coverage/

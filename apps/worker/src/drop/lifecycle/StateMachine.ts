@@ -1,0 +1,131 @@
+import { DropState, DropConfig, DropMeta } from "shared";
+
+export class StateMachine {
+  constructor(private sql: any) {}
+
+  // Read the full meta state
+  getMeta(): DropMeta {
+    const cursor = this.sql.exec("SELECT k, v_json FROM meta");
+    const meta: Partial<DropMeta> = {};
+    for (const row of cursor) {
+      meta[(row as any).k as keyof DropMeta] = JSON.parse((row as any).v_json);
+    }
+    
+    return {
+      state: meta.state || 'DRAFT',
+      config: meta.config || null,
+      server_seed: meta.server_seed || null,
+      seed_commitment: meta.seed_commitment || null,
+      snapshot_hash: meta.snapshot_hash || null,
+      result_hash: meta.result_hash || null,
+      allocation_committed_at: meta.allocation_committed_at || null,
+    };
+  }
+
+  // Update a specific meta key
+  private updateMeta(k: string, v: any) {
+    this.sql.exec("INSERT INTO meta (k, v_json) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v_json = excluded.v_json", k, JSON.stringify(v));
+  }
+  
+  // Transition logic
+  transition(to: DropState, now: number, payload?: any): boolean {
+    const meta = this.getMeta();
+    const from = meta.state;
+    
+    if (from === to) return true; // Idempotent
+
+    // Guard matrix and side-effects
+    if (from === 'DRAFT' && to === 'SCHEDULED') {
+      if (!meta.config || meta.config.total_inventory <= 0) {
+        throw new Error("Invalid configuration for SCHEDULED");
+      }
+      
+      // Execute side-effects inside DO SQL transaction
+      this.updateMeta('state', 'SCHEDULED');
+      
+      // Initialize tickets
+      const count = meta.config.total_inventory;
+      let values = [];
+      for (let i = 1; i <= count; i++) {
+        values.push(`(${i}, 'AVAILABLE', ${now})`);
+      }
+      if (values.length > 0) {
+        this.sql.exec(`INSERT OR IGNORE INTO tickets (seq, status, updated_at) VALUES ${values.join(',')}`);
+      }
+      
+      // Mocked crypto for server_seed / seed_commitment 
+      const serverSeed = "random-server-seed-" + now; 
+      const seedCommitment = "commit-" + serverSeed; // in reality, SHA256
+      this.updateMeta('server_seed', serverSeed);
+      this.updateMeta('seed_commitment', seedCommitment);
+      
+      // Outbox event to DropDO SQLite (authoritative outbox)
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      
+      return true;
+    }
+    
+    if (from === 'SCHEDULED' && to === 'REGISTRATION_OPEN') {
+      if (meta.config?.mode !== 'FAIR') throw new Error("Only FAIR mode supports registration");
+      this.updateMeta('state', 'REGISTRATION_OPEN');
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+    
+    if (from === 'SCHEDULED' && to === 'BOOKING_OPEN') {
+      if (meta.config?.mode !== 'NAIVE') throw new Error("Only NAIVE mode jumps to booking directly");
+      this.updateMeta('state', 'BOOKING_OPEN');
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+
+    if (from === 'REGISTRATION_OPEN' && to === 'REGISTRATION_CLOSED') {
+      this.updateMeta('state', 'REGISTRATION_CLOSED');
+      
+      // Admission stub: freeze and snapshot hash
+      this.updateMeta('snapshot_hash', 'snapshot-' + now);
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+
+    if (from === 'REGISTRATION_CLOSED' && to === 'BOOKING_OPEN') { // ALLOCATING merged into BOOKING_OPEN
+      if (!meta.snapshot_hash) throw new Error("No snapshot available");
+      this.updateMeta('state', 'BOOKING_OPEN');
+      this.updateMeta('allocation_committed_at', now);
+      this.updateMeta('result_hash', 'result-' + now);
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+
+    if (from === 'BOOKING_OPEN' && to === 'CLOSED') {
+      this.updateMeta('state', 'CLOSED');
+      
+      // Phase 5 integration stub: expire offers/holds, finalize waitlist behavior, and perform integrity scan.
+      // Do NOT implement the actual ticket/reservation updates here in Phase 3.
+      
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+    
+    if ((from === 'DRAFT' || from === 'SCHEDULED') && to === 'CANCELLED') {
+      this.updateMeta('state', 'CANCELLED');
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+
+    if (to === 'HALTED') {
+      // ANY state to HALTED
+      this.updateMeta('state', 'HALTED');
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'CRITICAL', reason: payload?.reason || "Invariant breach" }));
+      return true;
+    }
+
+    if (from === 'HALTED' && to === 'CLOSED') {
+      this.updateMeta('state', 'CLOSED');
+      this.sql.exec("INSERT INTO outbox (payload_json) VALUES (?)", JSON.stringify({ type: 'TRANSITION', to }));
+      return true;
+    }
+
+    return false; // Illegal transition
+  }
+}
