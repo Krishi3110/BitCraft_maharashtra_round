@@ -77,5 +77,10 @@ export async function verifyJWT(token: string, secret: string, expectedIss = 'fa
     throw new Error('Invalid audience');
   }
 
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!payload.sub || typeof payload.sub !== 'string' || !uuidRegex.test(payload.sub)) {
+    throw new Error('Invalid subject: must be a valid UUID');
+  }
+
   return payload;
 }

@@ -40,7 +40,16 @@ export default {
         const isSecure = url.protocol === 'https:' ? 'Secure;' : '';
         const cookie = `session=${token}; HttpOnly; ${isSecure} SameSite=Strict; Path=/; Max-Age=${48 * 3600}`;
 
-        return new Response(JSON.stringify({ token, participant_id: participantId }), {
+        const reqBody = await request.clone().json<any>().catch(() => ({}));
+        const isSimulator = reqBody.client_type === 'simulator';
+
+        const resPayload: any = { status: 'OK' };
+        if (isSimulator) {
+          resPayload.token = token;
+          resPayload.participant_id = participantId;
+        }
+
+        return new Response(JSON.stringify(resPayload), {
           status: 201,
           headers: {
             "Content-Type": "application/json",

@@ -3,11 +3,13 @@ import { signJWT, verifyJWT, encodeBase64Url } from '../src/auth/jwt';
 import { authenticate } from '../src/auth/middleware';
 
 const SECRET = 'a_very_long_secure_secret_for_testing_purposes_only';
+const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
+const ANOTHER_UUID = '123e4567-e89b-12d3-a456-426614174000';
 
 describe('Auth Identity & Session Utility', () => {
   it('1. Valid token accepted', async () => {
     const payload = {
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -16,12 +18,12 @@ describe('Auth Identity & Session Utility', () => {
     };
     const token = await signJWT(payload, SECRET);
     const verified = await verifyJWT(token, SECRET);
-    expect(verified.sub).toBe('p_123');
+    expect(verified.sub).toBe(VALID_UUID);
   });
 
   it('2. Invalid signature rejected', async () => {
     const payload = {
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -32,7 +34,7 @@ describe('Auth Identity & Session Utility', () => {
     const parts = token.split('.');
     
     // Tamper payload
-    const forgedPayload = encodeBase64Url(JSON.stringify({ ...payload, sub: 'p_hacker' }));
+    const forgedPayload = encodeBase64Url(JSON.stringify({ ...payload, sub: ANOTHER_UUID }));
     const forgedToken = `${parts[0]}.${forgedPayload}.${parts[2]}`;
 
     await expect(verifyJWT(forgedToken, SECRET)).rejects.toThrow('Invalid signature');
@@ -40,11 +42,11 @@ describe('Auth Identity & Session Utility', () => {
 
   it('3. Expired token rejected', async () => {
     const payload = {
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
-      iat: Math.floor(Date.now() / 1000) - 7200, // Issued 2 hours ago
-      exp: Math.floor(Date.now() / 1000) - 3600, // Expired 1 hour ago
+      iat: Math.floor(Date.now() / 1000) - 7200, 
+      exp: Math.floor(Date.now() / 1000) - 3600, 
       jti: 'j_123'
     };
     const token = await signJWT(payload, SECRET);
@@ -53,7 +55,7 @@ describe('Auth Identity & Session Utility', () => {
 
   it('4. Wrong issuer/audience rejected', async () => {
     const basePayload = {
-      sub: 'p_123',
+      sub: VALID_UUID,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
       jti: 'j_123'
@@ -68,7 +70,7 @@ describe('Auth Identity & Session Utility', () => {
 
   it('5. Missing secret fails safely', async () => {
     const payload = {
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -80,7 +82,7 @@ describe('Auth Identity & Session Utility', () => {
 
   it('6. Cookie and Bearer authentication work', async () => {
     const token = await signJWT({
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -88,31 +90,26 @@ describe('Auth Identity & Session Utility', () => {
       jti: 'j_123'
     }, SECRET);
 
-    // Test Bearer (Simulator style)
     const reqBearer = new Request('http://localhost/api/v1/drops/1/join', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const ctxBearer = await authenticate(reqBearer, SECRET);
-    expect(ctxBearer.participantId).toBe('p_123');
+    expect(ctxBearer.participantId).toBe(VALID_UUID);
     expect(ctxBearer.source).toBe('bearer');
 
-    // Test Cookie (Browser style)
     const reqCookie = new Request('http://localhost/api/v1/drops/1/join', {
       method: 'POST',
       headers: { 'Cookie': `session=${token}`, 'Origin': 'http://localhost' }
     });
     const ctxCookie = await authenticate(reqCookie, SECRET);
-    expect(ctxCookie.participantId).toBe('p_123');
+    expect(ctxCookie.participantId).toBe(VALID_UUID);
     expect(ctxCookie.source).toBe('cookie');
   });
 
   it('7. Client-supplied participant identity cannot override token identity', async () => {
-    // Identity is derived purely from authenticate() returning context. 
-    // It ignores any ?participant= querystring or body payload by design.
-    // We assert this by proving authenticate only reads the header/cookie.
     const token = await signJWT({
-      sub: 'p_real',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -120,19 +117,19 @@ describe('Auth Identity & Session Utility', () => {
       jti: 'j_123'
     }, SECRET);
 
-    const req = new Request('http://localhost/api/v1/drops/1/status?participant=p_hacker', {
+    const req = new Request(`http://localhost/api/v1/drops/1/status?participant=${ANOTHER_UUID}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
 
     const ctx = await authenticate(req, SECRET);
-    expect(ctx.participantId).toBe('p_real');
-    expect(ctx.participantId).not.toBe('p_hacker');
+    expect(ctx.participantId).toBe(VALID_UUID);
+    expect(ctx.participantId).not.toBe(ANOTHER_UUID);
   });
 
   it('8. Cookie-authenticated mutation rejects invalid Origin', async () => {
     const token = await signJWT({
-      sub: 'p_123',
+      sub: VALID_UUID,
       iss: 'fairdrop',
       aud: 'fairdrop-client',
       iat: Math.floor(Date.now() / 1000),
@@ -140,24 +137,69 @@ describe('Auth Identity & Session Utility', () => {
       jti: 'j_123'
     }, SECRET);
 
+    // Missing origin
     const reqMissingOrigin = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
       method: 'POST',
-      headers: { 'Cookie': `session=${token}` } // Missing Origin
+      headers: { 'Cookie': `session=${token}` } 
     });
     await expect(authenticate(reqMissingOrigin, SECRET)).rejects.toThrow('CSRF origin mismatch');
 
+    // Random malicious origin
     const reqBadOrigin = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
       method: 'POST',
       headers: { 'Cookie': `session=${token}`, 'Origin': 'https://hacker.com' }
     });
-    await expect(authenticate(reqBadOrigin, SECRET)).rejects.toThrow('CSRF origin mismatch');
+    await expect(authenticate(reqBadOrigin, SECRET)).rejects.toThrow('CSRF origin mismatch: unauthorized origin');
 
-    // Check GET doesn't require origin check
+    // Suffix match bypass attempt
+    const reqSuffixBypass = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
+      method: 'POST',
+      headers: { 'Cookie': `session=${token}`, 'Origin': 'http://localhost.evil.com' }
+    });
+    await expect(authenticate(reqSuffixBypass, SECRET)).rejects.toThrow('CSRF origin mismatch: unauthorized origin');
+
+    // Prefix match bypass attempt
+    const reqPrefixBypass = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
+      method: 'POST',
+      headers: { 'Cookie': `session=${token}`, 'Origin': 'http://attacker-localhost.com' }
+    });
+    await expect(authenticate(reqPrefixBypass, SECRET)).rejects.toThrow('CSRF origin mismatch: unauthorized origin');
+
+    // Malformed origin
+    const reqMalformed = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
+      method: 'POST',
+      headers: { 'Cookie': `session=${token}`, 'Origin': 'not-a-url' }
+    });
+    await expect(authenticate(reqMalformed, SECRET)).rejects.toThrow('CSRF origin mismatch: malformed origin');
+
+    // Valid configured localhost origin
+    const reqValidLocal = new Request('https://api.fairdrop.com/api/v1/drops/1/join', {
+      method: 'POST',
+      headers: { 'Cookie': `session=${token}`, 'Origin': 'http://localhost:5173' }
+    });
+    const ctxLocal = await authenticate(reqValidLocal, SECRET);
+    expect(ctxLocal.participantId).toBe(VALID_UUID);
+
+    // GET bypasses CSRF check
     const reqGet = new Request('https://api.fairdrop.com/api/v1/drops/1/status', {
       method: 'GET',
       headers: { 'Cookie': `session=${token}`, 'Origin': 'https://hacker.com' }
     });
     const ctxGet = await authenticate(reqGet, SECRET);
-    expect(ctxGet.participantId).toBe('p_123'); // Succeeds because it's a read operation
+    expect(ctxGet.participantId).toBe(VALID_UUID); 
+  });
+
+  it('9. JWT with malformed UUID subject rejected', async () => {
+    const payload = {
+      sub: 'p_123', // not a UUID
+      iss: 'fairdrop',
+      aud: 'fairdrop-client',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      jti: 'j_123'
+    };
+    const token = await signJWT(payload, SECRET);
+    await expect(verifyJWT(token, SECRET)).rejects.toThrow('Invalid subject: must be a valid UUID');
   });
 });
+

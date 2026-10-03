@@ -14,7 +14,7 @@ function parseCookies(cookieHeader: string | null): Record<string, string> {
   }, {} as Record<string, string>);
 }
 
-export async function authenticate(request: Request, secret: string): Promise<AuthContext> {
+export async function authenticate(request: Request, secret: string, allowedOrigins: string[] = []): Promise<AuthContext> {
   const authHeader = request.headers.get('Authorization');
   const cookieHeader = request.headers.get('Cookie');
   
@@ -39,13 +39,28 @@ export async function authenticate(request: Request, secret: string): Promise<Au
   // Validate CSRF for cookie-based state-changing requests
   if (source === 'cookie' && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
     const origin = request.headers.get('Origin');
-    const url = new URL(request.url);
-    
-    // In production, you would check against a strict whitelist of allowed origins.
-    // For this demonstration, we enforce that Origin must match the requested Host,
-    // or allow local development origins if applicable.
-    if (!origin || (origin !== url.origin && !origin.startsWith('http://localhost'))) {
-      throw new Error('CSRF origin mismatch');
+    if (!origin) {
+      throw new Error('CSRF origin mismatch: missing Origin header');
+    }
+
+    let isAllowed = false;
+    try {
+      const originUrl = new URL(origin);
+      const requestUrl = new URL(request.url);
+
+      if (originUrl.origin === requestUrl.origin) {
+        isAllowed = true;
+      } else if ((originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') && originUrl.protocol === 'http:') {
+        isAllowed = true;
+      } else if (allowedOrigins.includes(originUrl.origin)) {
+        isAllowed = true;
+      }
+    } catch {
+      throw new Error('CSRF origin mismatch: malformed origin');
+    }
+
+    if (!isAllowed) {
+      throw new Error('CSRF origin mismatch: unauthorized origin');
     }
   }
 
