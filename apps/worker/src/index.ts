@@ -171,10 +171,9 @@ export default {
           if (!row) {
             response = new Response(JSON.stringify({ error: "Not Found" }), { status: 404, headers: { "Content-Type": "application/json" } });
           } else {
-            response = new Response(JSON.stringify({
-              status: row.status,
-              payload: row.payload ? JSON.parse(row.payload as string) : {}
-            }), {
+            response = new Response(JSON.stringify(
+              Object.assign({ status: row.status }, row.payload ? JSON.parse(row.payload as string) : {})
+            ), {
               status: 200,
               headers: {
                 "Content-Type": "application/json",

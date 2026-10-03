@@ -60,9 +60,9 @@ describe('Commit 2: D1 Status Projections & Caching', () => {
     
     const res = await worker.fetch(req, env, ctx);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json<any>();
     expect(body.status).toBe('ALLOCATED');
-    expect(body.payload.rank).toBe(42);
+    expect(body.rank).toBe(42);
     expect(res.headers.get('Cache-Control')).toContain('s-maxage=5');
     
     // Assert DO was completely bypassed
