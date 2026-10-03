@@ -7,11 +7,15 @@ import { generateServerSeed, computeSeedCommitment, allocate } from "shared";
 export class DropDO extends DurableObject {
   private sm: StateMachine;
   private activeTransitions = new Map<DropState, Promise<boolean>>();
+  private dropId: string;
+  private flushActive = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.sm = new StateMachine(this.ctx.storage.sql);
+    this.dropId = (this.ctx.id as any).name || this.ctx.id.toString();
+    this.sm = new StateMachine(this.ctx.storage.sql, this.dropId);
     this.initializeSchema();
+    this.checkPendingOutbox();
   }
 
   private initializeSchema() {
@@ -28,7 +32,75 @@ export class DropDO extends DurableObject {
       CREATE TABLE IF NOT EXISTS idempotency (participant_id TEXT NOT NULL, key TEXT NOT NULL, response_json TEXT NOT NULL, PRIMARY KEY (participant_id, key));
       CREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, payload_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS risk_state (subject_ref TEXT PRIMARY KEY, last_action TEXT NOT NULL, updated_at INTEGER NOT NULL);
+
+      CREATE TABLE IF NOT EXISTS outbox2 (
+        event_id TEXT PRIMARY KEY, 
+        drop_id TEXT NOT NULL, 
+        participant_id TEXT NOT NULL, 
+        participant_version INTEGER NOT NULL, 
+        event_type TEXT NOT NULL, 
+        payload TEXT NOT NULL, 
+        created_at INTEGER NOT NULL
+      );
     `);
+
+    try {
+      this.ctx.storage.sql.exec("ALTER TABLE participants ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+    } catch (e) {
+      // Ignored if column already exists
+    }
+  }
+
+  private checkPendingOutbox() {
+    const row = this.ctx.storage.sql.exec("SELECT 1 FROM outbox2 LIMIT 1").next().value;
+    if (row) {
+      this.triggerFlush();
+    }
+  }
+
+  private triggerFlush() {
+    if (!this.flushActive) {
+      this.flushActive = true;
+      this.ctx.waitUntil(this.flushOutbox());
+    }
+  }
+
+  private async flushOutbox() {
+    try {
+      while (true) {
+        const rows = [...this.ctx.storage.sql.exec("SELECT * FROM outbox2 ORDER BY created_at ASC LIMIT 100")];
+        if (rows.length === 0) break;
+
+        const statements: any[] = [];
+        for (const r of rows as any[]) {
+          statements.push(
+            (this.env as Env).DB.prepare(
+              `INSERT INTO status_projections (drop_id, participant_id, version, status, payload, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(drop_id, participant_id) DO UPDATE SET
+                 status = excluded.status,
+                 payload = excluded.payload,
+                 version = excluded.version,
+                 updated_at = excluded.updated_at
+               WHERE excluded.version > status_projections.version`
+            ).bind(r.drop_id, r.participant_id, r.participant_version, JSON.parse(r.payload).status || 'REGISTERED', r.payload)
+          );
+        }
+
+        await (this.env as Env).DB.batch(statements);
+
+        const eventIds = rows.map((r: any) => `'${r.event_id}'`).join(',');
+        this.ctx.storage.transactionSync(() => {
+          this.ctx.storage.sql.exec(`DELETE FROM outbox2 WHERE event_id IN (${eventIds})`);
+        });
+      }
+    } catch (err) {
+      console.error("Outbox flush failed", err);
+      // Alarm based retry
+      this.ctx.storage.setAlarm(Date.now() + 5000);
+    } finally {
+      this.flushActive = false;
+    }
   }
 
   private scheduleNextAlarm(now: number) {
@@ -53,6 +125,10 @@ export class DropDO extends DurableObject {
   }
 
   async alarm() {
+    const row = this.ctx.storage.sql.exec("SELECT 1 FROM outbox2 LIMIT 1").next().value;
+    if (row) {
+      this.triggerFlush();
+    }
     const now = Date.now();
     await this.advanceClock(now);
   }
@@ -106,6 +182,10 @@ export class DropDO extends DurableObject {
         this.scheduleNextAlarm(now);
       }
     });
+    
+    // Always trigger flush after transition sync, as it might have created outbox events
+    this.triggerFlush();
+    
     return success;
   }
 
@@ -228,10 +308,21 @@ export class DropDO extends DurableObject {
         return new Response(JSON.stringify({error: "INVALID_STATE", details: "Registration is not open"}), { status: 409 });
       }
 
+      const now = Date.now();
       this.ctx.storage.transactionSync(() => {
         const id = "p_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
-        this.ctx.storage.sql.exec("INSERT OR IGNORE INTO participants (id, participant_key, status, registered_at, updated_at) VALUES (?, ?, 'REGISTERED', ?, ?)", id, body.participant_key, Date.now(), Date.now());
+        this.ctx.storage.sql.exec("INSERT OR IGNORE INTO participants (id, participant_key, status, registered_at, updated_at, version) VALUES (?, ?, 'REGISTERED', ?, ?, 1)", id, body.participant_key, now, now);
+        
+        // Push outbox2 event
+        const eventId = crypto.randomUUID();
+        this.ctx.storage.sql.exec(
+          "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          eventId, this.dropId, body.participant_key, 1, 'STATUS_UPDATED', JSON.stringify({ status: 'REGISTERED' }), now
+        );
       });
+      
+      this.triggerFlush();
+      
       return new Response("OK");
     }
 
@@ -252,3 +343,4 @@ export class DropDO extends DurableObject {
     return new Response("Not found", { status: 404 });
   }
 }
+

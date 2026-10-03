@@ -1,5 +1,6 @@
 import { DropDO } from "./drop/DropDO";
 import { signJWT } from "./auth/jwt";
+import { authenticate } from "./auth/middleware";
 
 export interface Env {
   DB: D1Database;
@@ -121,7 +122,54 @@ export default {
     }
 
     // Public read drop state
-    if (url.pathname.startsWith("/api/v1/drops/") && request.method === "GET") {
+    if (url.pathname.match(new RegExp("^/api/v1/drops/[^/]+/status$")) && request.method === "GET") {
+      const parts = url.pathname.split('/');
+      const dropId = parts[4];
+      
+      try {
+        const authCtx = await authenticate(request, env.SESSION_SECRET);
+        
+        const cache = caches.default;
+        const cacheKey = new Request(`${url.origin}/cache/drops/${dropId}/status/${authCtx.participantId}`, { method: 'GET' });
+        
+        let response = await cache.match(cacheKey);
+        
+        if (!response) {
+          const row = await env.DB.prepare("SELECT status, payload FROM status_projections WHERE drop_id = ? AND participant_id = ?")
+            .bind(dropId, authCtx.participantId)
+            .first();
+            
+          if (!row) {
+            response = new Response(JSON.stringify({ error: "Not Found" }), { status: 404, headers: { "Content-Type": "application/json" } });
+          } else {
+            response = new Response(JSON.stringify({
+              status: row.status,
+              payload: row.payload ? JSON.parse(row.payload as string) : {}
+            }), {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "s-maxage=5, max-age=5"
+              }
+            });
+          }
+          
+          if (response.status === 200 || response.status === 404) {
+             ctx.waitUntil(cache.put(cacheKey, response.clone()));
+          }
+        }
+        
+        return response;
+      } catch (err: any) {
+        if (err.message.includes('Missing authentication') || err.message.includes('expired') || err.message.includes('signature')) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+        }
+        console.error("Status endpoint error:", err);
+        return new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500 });
+      }
+    }
+
+    if (url.pathname.match(new RegExp("^/api/v1/drops/[^/]+$")) && request.method === "GET") {
       const parts = url.pathname.split('/');
       const dropId = parts[4];
       const stub = env.DROP_DO.get(env.DROP_DO.idFromName(dropId));

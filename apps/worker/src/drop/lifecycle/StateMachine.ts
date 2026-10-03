@@ -1,7 +1,7 @@
 import { DropState, DropConfig, DropMeta, AllocationResult } from "shared";
 
 export class StateMachine {
-  constructor(private sql: any) {}
+  constructor(private sql: any, private dropId: string) {}
 
   // Read the full meta state
   getMeta(): DropMeta {
@@ -27,17 +27,29 @@ export class StateMachine {
     this.sql.exec("INSERT INTO meta (k, v_json) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v_json = excluded.v_json", k, JSON.stringify(v));
   }
   
+  private updateParticipant(participantKey: string, status: string, now: number) {
+    this.sql.exec("UPDATE participants SET status = ?, updated_at = ?, version = version + 1 WHERE participant_key = ?", status, now, participantKey);
+    const row = this.sql.exec("SELECT version FROM participants WHERE participant_key = ?", participantKey).next().value;
+    if (row) {
+      const eventId = crypto.randomUUID();
+      this.sql.exec(
+        "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        eventId, this.dropId, participantKey, (row as any).version, 'STATUS_UPDATED', JSON.stringify({ status }), now
+      );
+    }
+  }
+
   // Apply allocation results atomically
   applyAllocation(result: AllocationResult, now: number) {
     // 1. Mark winners as ALLOCATED
     for (const participantId of result.winners) {
-      this.sql.exec("UPDATE participants SET status = 'ALLOCATED', updated_at = ? WHERE participant_key = ?", now, participantId);
+      this.updateParticipant(participantId, 'ALLOCATED', now);
     }
     // 2. Mark losers as WAITLISTED
     for (let i = 0; i < result.waitlist.length; i++) {
       const participantId = result.waitlist[i];
       // We could also store waitlist rank, but for Phase 4 we just mark them WAITLISTED.
-      this.sql.exec("UPDATE participants SET status = 'WAITLISTED', updated_at = ? WHERE participant_key = ?", now, participantId);
+      this.updateParticipant(participantId, 'WAITLISTED', now);
     }
     // 3. Update meta with audit values
     this.updateMeta('snapshot_hash', result.snapshotHash);
