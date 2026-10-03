@@ -29,10 +29,10 @@ export class MockApiClient implements ApiClient {
   }
 
   async joinDrop(dropId: string, participantData: any): Promise<JoinDropResponse> {
-    return { status: 'waiting', participantId: 'p_mock_123' };
+    return { status: 'REGISTERED', participantId: 'p_mock_123' };
   }
 
   async getAllocationStatus(dropId: string, participantId: string): Promise<AllocationStatusResponse> {
-    return { status: 'allocated' };
+    return { status: 'ALLOCATED' };
   }
 }

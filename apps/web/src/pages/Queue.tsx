@@ -13,7 +13,7 @@ export default function Queue() {
       try {
         const res = await apiClient.getAllocationStatus('ev_123', 'p_123456789');
         setTimeout(() => {
-          if (res.status === 'allocated') {
+          if (res.status === 'ALLOCATED') {
             navigate('/allocation');
           } else {
             navigate('/results');

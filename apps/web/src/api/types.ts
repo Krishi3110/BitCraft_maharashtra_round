@@ -20,7 +20,7 @@ export interface JoinDropResponse {
 }
 
 export interface AllocationStatusResponse {
-  status: 'allocated' | 'waitlisted' | 'not_selected' | 'pending';
+  status: 'REGISTERED' | 'PENDING' | 'ALLOCATED' | 'WAITLISTED' | 'CONFIRMED' | 'EXPIRED' | 'NOT_SELECTED';
 }
 
 export interface ApiClient {
