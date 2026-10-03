@@ -31,3 +31,7 @@ out/
 
 # Test artifacts
 coverage/
+
+# Python
+.venv
+__pycache__
