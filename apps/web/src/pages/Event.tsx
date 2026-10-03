@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
-import { useAuth } from '../AuthContext';
+import { useAuth } from '../auth';
 
 export default function Event() {
   const { isAuthenticated, isInitializing, login } = useAuth();
