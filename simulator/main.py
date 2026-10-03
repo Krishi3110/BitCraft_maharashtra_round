@@ -10,7 +10,6 @@ def run_logical_mode(config: ScenarioConfig):
     participants = generate_population(config)
     end_time = time.time()
     
-    # Example logic: count bots and humans
     humans = sum(1 for p in participants if p.profile.value == "HUMAN")
     bots = len(participants) - humans
     
@@ -34,7 +33,6 @@ async def main():
     print("1. Logical Mode")
     print("2. HTTP Mode")
     
-    # In a real tool this would use argparse, hardcoded to Logical for demo.
     mode = "logical" 
     
     if mode == "logical":
@@ -42,6 +40,11 @@ async def main():
     else:
         print("Running HTTP mode...")
         participants = generate_population(config)
+        
+        # Sort participants by arrival time so we fire them in realistic order
+        participants.sort(key=lambda p: p.arrival_timing_ms)
+        print(f"Prepared {len(participants)} requests with simulated arrival delays.")
+        
         await run_http_mode(participants, "http://localhost:3000")
 
 if __name__ == "__main__":
