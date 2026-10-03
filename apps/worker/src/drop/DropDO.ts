@@ -124,12 +124,49 @@ export class DropDO extends DurableObject {
     }
   }
 
+  private expireStaleReservations(now: number) {
+    const expiredCursor = this.ctx.storage.sql.exec("SELECT id, participant_id, ticket_id FROM reservations WHERE status = 'HELD' AND expires_at < ? LIMIT 100", now);
+    let expiredCount = 0;
+    
+    for (const row of expiredCursor) {
+      expiredCount++;
+      const { id, participant_id, ticket_id } = row as any;
+      
+      this.ctx.storage.sql.exec("UPDATE reservations SET status = 'EXPIRED' WHERE id = ?", id);
+      this.ctx.storage.sql.exec("UPDATE tickets SET status = 'AVAILABLE', holder_participant_id = NULL, updated_at = ? WHERE status = 'RESERVED' AND holder_participant_id = ?", now, participant_id);
+      
+      this.ctx.storage.sql.exec("UPDATE participants SET updated_at = ?, version = version + 1 WHERE participant_key = ?", now, participant_id);
+      const pRow = this.ctx.storage.sql.exec("SELECT version FROM participants WHERE participant_key = ?", participant_id).next().value;
+      
+      const payloadObj = {
+        status: 'ALLOCATED',
+        reservation_status: 'EXPIRED'
+      };
+      
+      const eventId = crypto.randomUUID();
+      this.ctx.storage.sql.exec(
+        "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        eventId, this.dropId, participant_id, (pRow as any).version, 'STATUS_UPDATED', JSON.stringify(payloadObj), now
+      );
+    }
+    
+    if (expiredCount > 0) {
+      this.triggerFlush();
+      if (expiredCount === 100) {
+        this.ctx.storage.setAlarm(Date.now() + 100);
+      }
+    }
+  }
+
   async alarm() {
     const row = this.ctx.storage.sql.exec("SELECT 1 FROM outbox2 LIMIT 1").next().value;
     if (row) {
       this.triggerFlush();
     }
     const now = Date.now();
+    this.ctx.storage.transactionSync(() => {
+      this.expireStaleReservations(now);
+    });
     await this.advanceClock(now);
   }
   
@@ -296,6 +333,194 @@ export class DropDO extends DurableObject {
       const body = await request.json<{virtual_now: number}>();
       await this.advanceClock(body.virtual_now);
       return new Response("OK");
+    }
+    
+    if (url.pathname === "/join" && request.method === "POST") {
+      const participantId = request.headers.get("X-Participant-Id");
+      if (!participantId) return new Response("Unauthorized", { status: 401 });
+
+      if (this.sm.getMeta().state !== 'REGISTRATION_OPEN') {
+        return new Response(JSON.stringify({ error: "INVALID_STATE", details: "Registration is not open" }), { status: 409 });
+      }
+
+      const now = Date.now();
+      let status = 'REGISTERED';
+      this.ctx.storage.transactionSync(() => {
+        const row = this.ctx.storage.sql.exec("SELECT status FROM participants WHERE participant_key = ?", participantId).next().value;
+        if (row) {
+          status = (row as any).status;
+        } else {
+          const id = crypto.randomUUID();
+          this.ctx.storage.sql.exec(
+            "INSERT INTO participants (id, participant_key, status, registered_at, updated_at, version) VALUES (?, ?, 'REGISTERED', ?, ?, 1)",
+            id, participantId, now, now
+          );
+          const eventId = crypto.randomUUID();
+          this.ctx.storage.sql.exec(
+            "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            eventId, this.dropId, participantId, 1, 'STATUS_UPDATED', JSON.stringify({ status: 'REGISTERED' }), now
+          );
+        }
+      });
+      this.triggerFlush();
+      return new Response(JSON.stringify({ status, participant_id: participantId }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (url.pathname === "/reserve" && request.method === "POST") {
+      const participantId = request.headers.get("X-Participant-Id");
+      if (!participantId) return new Response("Unauthorized", { status: 401 });
+
+      const meta = this.sm.getMeta();
+      if (meta.state !== 'BOOKING_OPEN') {
+        return new Response(JSON.stringify({ error: "INVALID_STATE", details: "Booking is not open" }), { status: 409 });
+      }
+
+      let resPayload: any = null;
+      let status = 400;
+
+      const now = Date.now();
+      let shouldArmAlarm = false;
+      let alarmTime = 0;
+
+      this.ctx.storage.transactionSync(() => {
+        this.expireStaleReservations(now);
+
+        const pRow = this.ctx.storage.sql.exec("SELECT status, version FROM participants WHERE participant_key = ?", participantId).next().value;
+        if (!pRow) {
+          status = 404;
+          resPayload = { error: "NOT_FOUND", details: "Participant not found" };
+          return;
+        }
+        if ((pRow as any).status !== 'ALLOCATED') {
+          status = 403;
+          resPayload = { error: "FORBIDDEN", details: "Participant is not ALLOCATED" };
+          return;
+        }
+
+        const rRow = this.ctx.storage.sql.exec("SELECT ticket_id, status, expires_at FROM reservations WHERE participant_id = ? AND status IN ('HELD', 'CONFIRMED')", participantId).next().value;
+        if (rRow) {
+          status = 200;
+          resPayload = {
+            status: 'ALLOCATED',
+            ticket_id: (rRow as any).ticket_id,
+            reservation_status: (rRow as any).status,
+            expires_at: (rRow as any).expires_at
+          };
+          return;
+        }
+
+        // Enforce configurable maximum hold-attempt policy to limit hold-hogging
+        const expiredCountCursor = this.ctx.storage.sql.exec("SELECT count(*) as c FROM reservations WHERE participant_id = ? AND status = 'EXPIRED'", participantId).next().value;
+        const expiredCount = (expiredCountCursor as any)?.c || 0;
+        const maxHolds = meta.config?.config_json?.max_holds_per_participant || 3;
+        
+        if (expiredCount >= maxHolds) {
+          status = 429;
+          resPayload = { error: "TOO_MANY_REQUESTS", details: "Maximum hold attempts exceeded." };
+          return;
+        }
+
+        const tRow = this.ctx.storage.sql.exec("SELECT seq FROM tickets WHERE status = 'AVAILABLE' ORDER BY seq ASC LIMIT 1").next().value;
+        if (!tRow) {
+          status = 409;
+          resPayload = { error: "SOLD_OUT", details: "No tickets available" };
+          return;
+        }
+        
+        const ticketSeq = (tRow as any).seq;
+        const ticketId = `tkt_${ticketSeq}`;
+        const holdTtl = meta.config?.hold_ttl_ms || 900000;
+        const expiresAt = now + holdTtl;
+        const resId = crypto.randomUUID();
+
+        this.ctx.storage.sql.exec("UPDATE tickets SET status = 'RESERVED', holder_participant_id = ?, updated_at = ? WHERE seq = ?", participantId, now, ticketSeq);
+        this.ctx.storage.sql.exec(
+          "INSERT INTO reservations (id, participant_id, ticket_id, status, expires_at) VALUES (?, ?, ?, 'HELD', ?)",
+          resId, participantId, ticketId, expiresAt
+        );
+
+        this.ctx.storage.sql.exec("UPDATE participants SET updated_at = ?, version = version + 1 WHERE participant_key = ?", now, participantId);
+        const newVersion = (pRow as any).version + 1;
+        
+        const payloadObj = {
+          status: 'ALLOCATED',
+          ticket_id: ticketId,
+          reservation_status: 'HELD',
+          expires_at: expiresAt
+        };
+        
+        const eventId = crypto.randomUUID();
+        this.ctx.storage.sql.exec(
+          "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          eventId, this.dropId, participantId, newVersion, 'STATUS_UPDATED', JSON.stringify(payloadObj), now
+        );
+
+        status = 200;
+        resPayload = payloadObj;
+        shouldArmAlarm = true;
+        alarmTime = expiresAt;
+      });
+      
+      this.triggerFlush();
+      if (shouldArmAlarm) {
+        // Simple alarm arming
+        this.ctx.storage.setAlarm(alarmTime);
+      }
+      return new Response(JSON.stringify(resPayload), { status, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (url.pathname === "/confirm" && request.method === "POST") {
+      const participantId = request.headers.get("X-Participant-Id");
+      if (!participantId) return new Response("Unauthorized", { status: 401 });
+
+      let resPayload: any = null;
+      let status = 400;
+
+      const now = Date.now();
+      this.ctx.storage.transactionSync(() => {
+        this.expireStaleReservations(now);
+
+        const rRow = this.ctx.storage.sql.exec("SELECT id, status, expires_at FROM reservations WHERE participant_id = ? AND status IN ('HELD', 'CONFIRMED')", participantId).next().value;
+        if (!rRow) {
+          status = 404;
+          resPayload = { error: "NOT_FOUND", details: "No active reservation" };
+          return;
+        }
+
+        if ((rRow as any).status === 'CONFIRMED') {
+          status = 200;
+          resPayload = { status: 'CONFIRMED' };
+          return;
+        }
+
+        if (now > (rRow as any).expires_at) {
+          status = 400;
+          resPayload = { error: "EXPIRED", details: "Reservation has expired" };
+          return;
+        }
+
+        const resId = (rRow as any).id;
+        
+        this.ctx.storage.sql.exec("UPDATE reservations SET status = 'CONFIRMED', confirmed_at = ? WHERE id = ?", now, resId);
+        this.ctx.storage.sql.exec("UPDATE tickets SET status = 'SOLD', updated_at = ? WHERE holder_participant_id = ?", now, participantId);
+        this.ctx.storage.sql.exec("UPDATE participants SET status = 'CONFIRMED', updated_at = ?, version = version + 1 WHERE participant_key = ?", now, participantId);
+        
+        const pRow = this.ctx.storage.sql.exec("SELECT version FROM participants WHERE participant_key = ?", participantId).next().value;
+        
+        const payloadObj = { status: 'CONFIRMED' };
+        
+        const eventId = crypto.randomUUID();
+        this.ctx.storage.sql.exec(
+          "INSERT INTO outbox2 (event_id, drop_id, participant_id, participant_version, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          eventId, this.dropId, participantId, (pRow as any).version, 'STATUS_UPDATED', JSON.stringify(payloadObj), now
+        );
+
+        status = 200;
+        resPayload = payloadObj;
+      });
+
+      this.triggerFlush();
+      return new Response(JSON.stringify(resPayload), { status, headers: { "Content-Type": "application/json" } });
     }
     
     // Test endpoint to add participants manually to DO state

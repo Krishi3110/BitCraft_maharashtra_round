@@ -121,6 +121,35 @@ export default {
       return new Response(res.body, { status: res.status });
     }
 
+    // Public booking endpoints
+    const bookingMatch = url.pathname.match(new RegExp("^/api/v1/drops/([^/]+)/(join|reserve|confirm)$"));
+    if (bookingMatch && request.method === "POST") {
+      const dropId = bookingMatch[1];
+      const action = bookingMatch[2];
+      try {
+        const authCtx = await authenticate(request, env.SESSION_SECRET);
+        const stub = env.DROP_DO.get(env.DROP_DO.idFromName(dropId));
+        
+        // Strip client headers and inject trusted identity
+        const fwdReq = new Request(`http://do/${action}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Participant-Id": authCtx.participantId
+          },
+          body: await request.clone().text().catch(() => "{}")
+        });
+        
+        const res = await stub.fetch(fwdReq);
+        return new Response(res.body, { status: res.status, headers: { "Content-Type": "application/json" } });
+      } catch (err: any) {
+        if (err.message.includes('Missing authentication') || err.message.includes('expired') || err.message.includes('signature')) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+        }
+        return new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500 });
+      }
+    }
+
     // Public read drop state
     if (url.pathname.match(new RegExp("^/api/v1/drops/[^/]+/status$")) && request.method === "GET") {
       const parts = url.pathname.split('/');
