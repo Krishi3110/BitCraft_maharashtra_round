@@ -1,12 +1,41 @@
+import os
 import asyncio
 import aiohttp
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from models import Participant, ScenarioConfig
 
-class Transport:
+class TransportInterface:
+    async def connect(self):
+        pass
+    async def close(self):
+        pass
+    async def create_experiment(self, config: ScenarioConfig):
+        pass
+    async def register_participant(self, p: Participant):
+        pass
+    async def send_participant_action(self, p: Participant, action: str):
+        pass
+    async def send_behavioral_batch(self, p: Participant):
+        pass
+    async def query_status(self, drop_id: str, p: Participant):
+        pass
+    async def query_allocation(self, drop_id: str, p: Participant):
+        pass
+    async def finalize_experiment(self, drop_id: str):
+        pass
+
+class MockTransport(TransportInterface):
+    async def connect(self):
+        print("MockTransport connected")
+    async def close(self):
+        print("MockTransport closed")
+    async def register_participant(self, p: Participant):
+        return {"status": "mock_success", "participant_id": p.participant_id}
+
+class HTTPTransport(TransportInterface):
     def __init__(self, base_url: str):
         self.base_url = base_url
-        self.session = None
+        self.session: Optional[aiohttp.ClientSession] = None
         
     async def connect(self):
         self.session = aiohttp.ClientSession(base_url=self.base_url)
@@ -15,41 +44,40 @@ class Transport:
         if self.session:
             await self.session.close()
 
+    async def create_experiment(self, config: ScenarioConfig):
+        # Pending integration
+        pass
+
     async def register_participant(self, p: Participant):
         if not self.session:
             raise RuntimeError("Transport not connected")
         
-        # Example payload
         payload = {
             "participant_id": p.participant_id,
             "account_id": p.account_id,
-            "profile": p.profile.value,
-            "telemetry": {
-                "mouse_moves": p.telemetry_profile.mouse_moves_per_sec,
-                "clicks": p.telemetry_profile.clicks_per_sec,
-                "scrolls": p.telemetry_profile.scrolls_per_sec,
-                "dwell_time": p.telemetry_profile.dwell_time_ms
-            }
         }
         
-        # In a real scenario, this would send an HTTP request:
-        # async with self.session.post("/api/v1/event/join", json=payload) as resp:
+        # PENDING backend endpoint implementation
+        # async with self.session.post("/api/v1/drops/ev_123/join", json=payload) as resp:
         #    return await resp.json()
         
-        # We are just an abstraction for now.
         return {"status": "mock_success", "participant_id": p.participant_id}
 
-async def run_http_mode(participants: List[Participant], base_url: str):
-    transport = Transport(base_url)
+    async def send_behavioral_batch(self, p: Participant):
+        # PENDING Phase 7 backend implementation
+        pass
+
+async def run_http_mode(participants: List[Participant], base_url: str = None):
+    url = base_url or os.getenv('FAIRDROP_API_BASE_URL', 'http://localhost:8787')
+    transport = HTTPTransport(url)
     await transport.connect()
     
     try:
         tasks = []
         for p in participants:
-            # We would normally schedule this based on p.arrival_timing_ms
             tasks.append(transport.register_participant(p))
             
         results = await asyncio.gather(*tasks)
-        print(f"Sent {len(results)} registration requests.")
+        print(f"Sent {len(results)} registration requests to {url}.")
     finally:
         await transport.close()
